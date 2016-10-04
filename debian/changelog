@@ -1,0 +1,116 @@
+onboard (1.3.0-1) unstable; urgency=medium
+
+  [ Jeremy Bicha ]
+  * New upstream release. (Closes: #834881).
+  * Add gnome-shell-extension-onboard package. (Closes: #825807).
+  * Use pybuild and simplify debian/rules.
+  * debian/control:
+    + Build-depend on python3-cairo and python3-gi for dh_auto_test.
+    + Drop unnecessary build-depends on quilt and X-Python3-Version.
+    + Explicitly build-depend on dh-python.
+    + Add myself to Uploaders.
+    + Bump Breaks/Replaces on onboard.
+    + Lower gir1.2-appindicator3-0.1 and gir1.2-atspi-2.0 to Recommends.
+    + declare compatibility with gnome-shell 3.21.91 and 3.21.92.
+  * debian/rules:
+   + Enable all hardening flags except pie.
+  * Update signing-key.asc after verifying new key signed with old one.
+  * debian/patches:
+    + Drop all patches. Applied in new release.
+  * debian/onboard-common.install:
+    + Install dbus service.
+    + Don't install gnome-shell-extension files in onboard-common.
+
+  [ Mike Gabriel ]
+  * debian/copyright:
+    + Update copyright attributions.
+  * debian/copyright.in:
+    + Update auto-generated copyright template.
+
+ -- Mike Gabriel <sunweaver@debian.org>  Tue, 04 Oct 2016 22:58:05 +0200
+
+onboard (1.2.0-2) unstable; urgency=medium
+
+  [ Jeremy Bicha ]
+  * debian/control:
+    + Depend on gir1.2-atspi-2.0. (Closes: #826579).
+  * Add debian/upstream/signing-key.asc
+  * debian/patches:
+    + Add 0002_build-with-gcc6.patch. (Closes: #812033).
+
+  [ Mike Gabriel ]
+  * debian/rules:
+    + Enable all hardening flags.
+  * debian/control:
+    + Versioned B-D on dpkg-dev (>= 1.16.1.1).
+
+ -- Mike Gabriel <sunweaver@debian.org>  Sat, 30 Jul 2016 23:45:22 +0200
+
+onboard (1.2.0-1) unstable; urgency=medium
+
+  * New upstream release. (Closes: #818500).
+  * debian/copyright:
+    + DEP-5 does not support filenames containing blanks. Using the ? wildcard
+      to work around lintian failing on those filenames. Thanks to Niels Thykier
+      for suggesting this.
+    + debian/copyright: Update auto-generated copyright.in reference file.
+    + Update copyright attributions. Include information from upstream's
+      COPYING file.
+  * debian/patches:
+    + Drop 0002-reproducible-build.patch. Applied upstream.
+  * man pages:
+    + Drop man pages provided by Debian maintainer. Supplied upstream now.
+  * debian/control:
+    + Bump Standards: to 3.9.8. No changes needed.
+    + Use encrypted URLs for Vcs-*: field.
+    + Move from R (onboard) to D (onboard): gir1.2-appindicator3-0.1. Onboard
+      fails to start if gir1.2-appindicator3-0.1 is not installed.
+    + Process with wrap-and-sort.
+  * debian/{*.install,rules,onboard.docs}:
+    + Adapt installation of files into bin:packages to latest upstream release.
+
+ -- Mike Gabriel <sunweaver@debian.org>  Sun, 29 May 2016 23:03:36 +0200
+
+onboard (1.1.2-2) unstable; urgency=medium
+
+  * debian/control:
+    + Raise versioned BD: debhelper (>= 9).
+  * debian/compat:
+     + Bump DH version compatibility to debhelper 9.
+  * debian/patches:
+    + Add 0002-reproducible-build.patch. Make build reproducible.
+      (Closes: #806517).
+
+ -- Mike Gabriel <sunweaver@debian.org>  Sat, 02 Jan 2016 09:57:15 +0100
+
+onboard (1.1.2-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Mike Gabriel <sunweaver@debian.org>  Wed, 02 Sep 2015 06:26:06 +0200
+
+onboard (1.1.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * debian/control:
+    + Stop hard-coding dependencies on shared libraries. These are handled by
+      ${shlibs:Depends}. (Closes: #794648).
+  * debian/patches:
+    + Rebase 0001_make-desktop-files-appropriate-for-Debian.patch. Drop
+      modifications of onboard-autostart.desktop.
+  * debian/copyright:
+    + Update copyright.in template file.
+    + Update for latest upstream release.
+  * debian/onboard-common.install:
+    + Adapt to latest upstream release.
+  * lintian:
+    + Drop empty onboard.lintian-overrides file.
+
+ -- Mike Gabriel <sunweaver@debian.org>  Wed, 19 Aug 2015 21:56:37 +0200
+
+onboard (1.0.1-1) unstable; urgency=low
+
+  * Initial upload to Debian (Closes: #694514). Most of the packaging
+    adopted from the onboard package in Ubuntu trusty (1.0.0-0ubuntu1).
+
+ -- Mike Gabriel <sunweaver@debian.org>  Tue, 20 Jan 2015 05:59:03 +0100
