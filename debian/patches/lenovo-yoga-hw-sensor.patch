@@ -1,0 +1,12 @@
+Add patch for Lenovo Yoga ideapad sensor
+--- a/Onboard/HardwareSensorTracker.py
++++ b/Onboard/HardwareSensorTracker.py
+@@ -56,6 +56,8 @@
+         # ideapad-laptop.c, only debugfs which requires root
+         # ("/sys/kernel/debug/ideapad/status",
+         # re.compile("Touchpad status:Off(0)")),
++        ("/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/touchpad",
++         "0"),
+ 
+         # thinkpad_acpi.c
+         ("/sys/devices/platform/thinkpad_acpi/hotkey_tablet_mode",
