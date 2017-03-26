@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright © 2012-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2012-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -404,7 +404,8 @@ class LayoutView:
         except AttributeError:
             size, size_mm = get_monitor_dimensions(self)
             filename = config.get_desktop_background_filename()
-            if not filename:
+            if not filename or \
+               size[0] <= 0 or size[1] <= 0:
                 pixbuf = None
             else:
                 try:
@@ -775,4 +776,21 @@ class LayoutView:
         if layout and keyboard:  # may be gone on exit
             return layout.get_key_at(point, keyboard.active_layer)
         return None
+
+    def get_xid(self):
+        # Zesty, X, Gtk 3.22: XInput select_events() on self leads to
+        # LP: #1636252. On the first call to get_xid() of a child widget,
+        # Gtk creates a new native X Window with broken transparency.
+        # The toplevel window ought to always have a native X window, so
+        # we'll pick that one instead and skip on-the fly creation.
+        # TouchInput isn't used for anything other than full client areas
+        # yet, so in principle this shouldn't be a problem.
+
+        toplevel = self.get_toplevel()
+        if toplevel:
+            topwin = toplevel.get_window()
+            if topwin:
+                return topwin.get_xid()
+        return 0
+
 

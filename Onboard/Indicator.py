@@ -2,7 +2,7 @@
 
 # Copyright © 2010 Chris Jones <tortoise@tortuga>
 # Copyright © 2010 Francesco Fumanti <francesco.fumanti@gmx.net>
-# Copyright © 2011-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2011-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -128,7 +128,9 @@ class ContextMenu(GObject.GObject):
         run_script("sokSettings")
 
     def on_show_keyboard_toggle(self):
-        self._keyboard.toggle_visible()
+        # The menu item might have been activated by keyboard hotkeys. Delay
+        # request until keys have been released.
+        self._keyboard.request_visibility_toggle()
 
     def _on_help(self, data=None):
         subprocess.Popen(["/usr/bin/yelp", "help:onboard"])
@@ -170,16 +172,15 @@ class Indicator():
 
         if sip == StatusIconProviderEnum.auto:
             # auto-detection
-            if config.prefer_gtkstatusicon():
-                sip = StatusIconProviderEnum.GtkStatusIcon
-            else:
-                sip = StatusIconProviderEnum.AppIndicator
+            sip = config.get_preferred_statusicon_provider()
 
         if sip == StatusIconProviderEnum.GtkStatusIcon:
             backends = [BackendGtkStatusIcon]
         elif sip == StatusIconProviderEnum.AppIndicator:
             backends = [BackendAppIndicator, BackendGtkStatusIcon]
-        else:
+        elif sip is None:
+            backends = []
+        else:  # sip == StatusIconProviderEnum.auto
             backends = [BackendAppIndicator,
                         BackendGtkStatusIcon]
 
@@ -193,11 +194,16 @@ class Indicator():
                              .format(backend.__name__, unicode_str(ex)))
 
         _logger.info("Status icon provider: '{}' selected"
-                     .format(backend.__name__))
+                     .format(self._backend and
+                             type(self._backend).__name__))
 
-        if self._backend:
+        if self._backend is not None:
             self._backend.set_visible(False)
 
+    def cleanup(self):
+        if self._backend:
+            self._backend.cleanup()
+        self.set_keyboard(None)
 
     def set_keyboard(self, keyboard):
         self._keyboard = keyboard
@@ -210,7 +216,8 @@ class Indicator():
         self._menu.update_items()
 
     def set_visible(self, visible):
-        self._backend.set_visible(visible)
+        if self._backend is not None:
+            self._backend.set_visible(visible)
 
 
 class BackendBase():
@@ -225,6 +232,9 @@ class BackendBase():
 
     def __init__(self, menu):
         self._menu = menu
+
+    def cleanup(self):
+        pass
 
     def get_menu(self):
         return self._menu
@@ -325,6 +335,9 @@ class BackendAppIndicator(BackendBase):
                     _logger.warning("Failed to setup D-Bus match rule, "
                                     "no left-click Activate() for AppIndicator: " +
                                     unicode_str(ex))
+
+    def cleanup(self):
+        pass
 
     def _on_activate_method(self, bus, message):
         if message.get_path() == self.STATUSNOTIFIER_OBJECT and \

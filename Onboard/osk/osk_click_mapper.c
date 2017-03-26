@@ -1,6 +1,6 @@
 /*
  * Copyright © 2011 Gerd Kohlberger <lowfi@chello.at>
- * Copyright © 2012-2014 marmuta <marmvta@gmail.com>
+ * Copyright © 2012-2014, 2016 marmuta <marmvta@gmail.com>
  *
  * This file is part of Onboard.
  *
@@ -62,7 +62,7 @@ typedef struct {
 /* saved button mappings */
 #define MAX_BUTTONS 512
 typedef struct {
-    int device_id;
+    XID device_id;
     unsigned char buttons[MAX_BUTTONS];
     int num_buttons;
 } PointerState;

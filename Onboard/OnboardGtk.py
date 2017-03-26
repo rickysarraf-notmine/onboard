@@ -4,7 +4,7 @@
 # Copyright © 2007-2010 Chris Jones <tortoise@tortuga>
 # Copyright © 2008-2010 Francesco Fumanti <francesco.fumanti@gmx.net>
 # Copyright © 2012-2013 Gerd Kohlberger <lowfi@chello.at>
-# Copyright © 2010-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2010-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -40,8 +40,9 @@ try:
     import dbus.service
     import dbus.mainloop.glib
     from Onboard.DBusUtils import ServiceBase, dbus_property
+    has_dbus = True
 except ImportError:
-    pass
+    has_dbus = False
 
 from Onboard.KbdWindow       import KbdWindow, KbdPlugWindow
 from Onboard.Keyboard        import Keyboard
@@ -85,7 +86,7 @@ class OnboardGtk(object):
         # no python3-dbus on Fedora17
         bus = None
         err_msg = ""
-        if "dbus" not in globals():
+        if not has_dbus:
             err_msg = "D-Bus bindings unavailable"
         else:
             # Use D-bus main loop by default
@@ -251,14 +252,21 @@ class OnboardGtk(object):
             # Make sure the keyboard fits on screen
             rect = self._window.limit_size(rect)
 
-            if rect != self._window.get_rect():
+            if not rect.is_empty() and \
+               rect != self._window.get_rect():
+                _logger.debug("limiting window size: {} to {}"
+                            .format(self._window.get_rect(), rect))
                 orientation = self._window.get_screen_orientation()
                 self._window.write_window_rect(orientation, rect)
                 self._window.restore_window_rect()  # move/resize early
+            else:
+                _logger.debug("not limiting window size: {} to {}"
+                            .format(self._window.get_rect(), rect))
+
 
         # export dbus service
         if not config.xid_mode and \
-           "dbus" in globals():
+           has_dbus:
             self.service_keyboard = ServiceOnboardKeyboard(self)
 
         # show/hide the window
@@ -287,10 +295,6 @@ class OnboardGtk(object):
             lambda x: once(self.keyboard_widget.update_inactive_transparency)
 
         # general
-        config.auto_show.enabled_notify_add(lambda x:
-                                    self.keyboard.update_auto_show())
-        config.auto_show.hide_on_key_press_notify_add(lambda x:
-                                    self.keyboard.update_auto_hide())
 
         # keyboard
         config.keyboard.key_synth_notify_add(reload_layout)
@@ -333,6 +337,16 @@ class OnboardGtk(object):
 
         # snippets
         config.snippets_notify_add(reload_layout)
+
+        # auto-show
+        config.auto_show.enabled_notify_add(
+            lambda x: self.keyboard.update_auto_show())
+        config.auto_show.hide_on_key_press_notify_add(
+            lambda x: self.keyboard.update_auto_hide())
+        config.auto_show.tablet_mode_detection_notify_add(
+            lambda x: self.keyboard.update_tablet_mode_detection())
+        config.auto_show.keyboard_device_detection_enabled_notify_add(
+            lambda x: self.keyboard.update_keyboard_device_detection())
 
         # word suggestions
         config.word_suggestions.show_context_line_notify_add(update_ui)
@@ -604,7 +618,8 @@ class OnboardGtk(object):
 
     def on_gdk_setting_changed(self, name):
         if name == "gtk-theme-name":
-            self.on_gtk_theme_changed()
+            # In Zesty this has to be delayed too.
+            GLib.timeout_add_seconds(1, self.on_gtk_theme_changed)
 
         elif name in ["gtk-xft-dpi",
                       "gtk-xft-antialias"
@@ -767,11 +782,14 @@ class OnboardGtk(object):
                 self.keyboard.scanner = None
             self.keyboard.cleanup()
 
-        self.status_icon.set_keyboard(None)
+        self.status_icon.cleanup()
+        self.status_icon = None
+
         self._window.cleanup()
         self._window.destroy()
         self._window = None
         Gtk.main_quit()
+
 
     def final_cleanup(self):
         config.final_cleanup()
@@ -820,7 +838,7 @@ class OnboardGtk(object):
         return result
 
 
-if "dbus" in globals():
+if has_dbus:
     class ServiceOnboardKeyboard(ServiceBase):
         """
         Onboard's main D-Bus service.
@@ -830,6 +848,8 @@ if "dbus" in globals():
         PATH = "/org/onboard/Onboard/Keyboard"
         IFACE = "org.onboard.Onboard.Keyboard"
 
+        LOCK_REASON = "D-Bus"
+
         def __init__(self, app):
             ServiceBase.__init__(self, dbus.SessionBus(), self.NAME, self.PATH)
             self._keyboard = app.keyboard
@@ -837,15 +857,15 @@ if "dbus" in globals():
 
         @dbus.service.method(dbus_interface=IFACE)
         def Show(self):  # noqa: flake8
-            self._keyboard.set_visible(True)
+            self._keyboard.request_visibility(True)
 
         @dbus.service.method(dbus_interface=IFACE)
         def Hide(self):  # noqa: flake8
-            self._keyboard.set_visible(False)
+            self._keyboard.request_visibility(False)
 
         @dbus.service.method(dbus_interface=IFACE)
         def ToggleVisible(self):  # noqa: flake8
-            self._keyboard.toggle_visible()
+            self._keyboard.request_visibility_toggle()
 
         # private method, for unit-testing only
         if config.is_running_from_source:
@@ -863,9 +883,22 @@ if "dbus" in globals():
                                        key.get_state()])
                 return result
 
+        # Property Visible, read-only
         @dbus_property(dbus_interface=IFACE, signature='b')
         def Visible(self):  # noqa: flake8
             return self._keyboard.is_visible()
+
+        # Property AutoShowPaused, read-write
+        @dbus_property(dbus_interface=IFACE, signature='b')
+        def AutoShowPaused(self):  # noqa: flake8
+            return self._keyboard.is_auto_show_locked(self.LOCK_REASON)
+
+        @AutoShowPaused.setter
+        def AutoShowPaused(self, value):  # noqa: flake8
+            if value:
+                self._keyboard.auto_show_lock_and_hide(self.LOCK_REASON)
+            else:
+                self._keyboard.auto_show_unlock(self.LOCK_REASON)
 
 
 def cb_any_event(event, onboard):

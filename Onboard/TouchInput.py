@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright © 2012-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2012-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -392,7 +392,7 @@ class InputEventSource(EventSource, XIDeviceEventLogger):
         # None of these problems are assumed to exist for touch devices.
         log("_on_device_event8 {}", self._xi_grab_active)
         if self._xi_grab_active and \
-           (event_type == XIEventType.Motion or \
+           (event_type == XIEventType.Motion or
             event_type == XIEventType.ButtonRelease):
             if not self._xi_grab_events_selected:
                 self._select_xi_grab_events(True)
@@ -412,10 +412,10 @@ class InputEventSource(EventSource, XIDeviceEventLogger):
             # one finger, touching anything in a long press popup must
             # not also affect the keyboard below.
             xid_event = event.xid_event
-            xid_win = win.get_xid()
+            xid_win = self.get_xid()
             log("_on_device_event10 {} {}", xid_event, xid_win)
             if xid_event != 0 and \
-                xid_event != xid_win:
+               xid_event != xid_win:
                 log("_on_device_event11")
                 return
 
@@ -446,7 +446,6 @@ class InputEventSource(EventSource, XIDeviceEventLogger):
             self._on_leave_notify(self, event)
 
     def _log_device_event(self, event):
-        win = self.get_window()
         if not event.xi_type in [ XIEventType.TouchUpdate,
                                   XIEventType.Motion]:
             self.log_event("Device event: dev_id={} src_id={} xi_type={} "
@@ -456,7 +455,7 @@ class InputEventSource(EventSource, XIDeviceEventLogger):
                                     event.source_id,
                                     event.xi_type,
                                     event.xid_event,
-                                    win.get_xid() if win else 0,
+                                    self.get_xid(),
                                     event.x, event.y,
                                     event.x_root, event.y_root,
                                     event.button, event.state,

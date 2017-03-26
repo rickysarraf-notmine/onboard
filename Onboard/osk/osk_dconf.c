@@ -1,6 +1,6 @@
 /*
  * Copyright © 2012 Gerd Kohlberger <lowfi@chello.at>
- * Copyright © 2012-2014 marmuta <marmvta@gmail.com>
+ * Copyright © 2012-2014, 2016 marmuta <marmvta@gmail.com>
  *
  * This file is part of Onboard.
  *
@@ -64,7 +64,7 @@ static PyObject*
 unpack_variant(GVariant* value)
 {
     PyObject* result = NULL;
-    int i;
+    gsize i;
 
     GVariantClass class = g_variant_classify (value);
     switch (class)

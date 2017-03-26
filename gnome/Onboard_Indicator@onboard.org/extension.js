@@ -5,6 +5,9 @@
  * DBus proxy and default keyboard hiding based on ideas by Simon Schumann.
  * https://github.com/schuhumi/gnome-shell-extension-onboard-integration
  *
+ * EdgeDragAction gesture based on code by Simon Schumann.
+ * https://github.com/schuhumi/gnome-shell-extension-slide-for-keyboard
+ *
  * This file is part of Onboard.
  *
  * Onboard is free software; you can redistribute it and/or modify
@@ -30,11 +33,18 @@ const Gio = imports.gi.Gio;
 const GLib = imports.gi.GLib;
 const Lang = imports.lang;
 const Shell = imports.gi.Shell;
+const EdgeDragAction = imports.ui.edgeDragAction;
 
 const PanelMenu = imports.ui.panelMenu;
 const PopupMenu = imports.ui.popupMenu;
 
+const this_extension = imports.misc.extensionUtils.getCurrentExtension();
+const Convenience = this_extension.imports.convenience;
+
 let _onboard;
+let _indicator;
+let _gesture = null;
+let Schema;
 
 
 const OnboardIndicator = new Lang.Class({
@@ -114,11 +124,6 @@ const Onboard = new Lang.Class({
     },
 
     enable: function() {
-        // enable auto-show
-        let auto_show = new Gio.Settings({ schema_id: 'org.onboard.auto-show'});
-        if (auto_show)
-            auto_show.set_boolean('enabled', true);
-
         // Start Onboard to overcome --not-show-in=GNOME
         // in onboard-autostart.desktop.
         this.launch();
@@ -178,6 +183,21 @@ const Onboard = new Lang.Class({
         GLib.spawn_command_line_async('killall onboard', null);
     },
 
+    // Show on user request - either Onboard or the built-in keyboard.
+    ShowAnyKeyboard: function() {
+        // Show built-in keyboard where appropriate. Won't show Onboard
+        // because it uses its own auto-show.
+        Main.keyboard._keyboardRequested = true;
+        Main.keyboard._keyboardVisible = false;
+        Main.keyboard.Show(global.get_current_time());
+
+        // Show Onboard
+        if (Main.actionMode == Shell.ActionMode.NORMAL)
+        {
+            this.Show();
+        }
+    },
+
     launch: function() {
         if (!this.proxy.g_name_owner)  // not yet running?
             GLib.spawn_command_line_async('onboard', null);
@@ -193,25 +213,71 @@ const Onboard = new Lang.Class({
     },
 });
 
-
-function init() {
+function enable_show_gesture(enable) {
+    if (enable)
+    {
+        if (_gesture == null)
+        {
+            _gesture = new EdgeDragAction.EdgeDragAction(
+                    St.Side.BOTTOM, Shell.ActionMode.NORMAL);
+            _gesture.connect('activated', Lang.bind(this, function() {
+                _onboard.ShowAnyKeyboard();
+            }));
+            global.stage.add_action(_gesture);
+        }
+    }
+    else
+    {
+        if (_gesture != null)
+        {
+            global.stage.remove_action(_gesture);
+            _gesture = null;
+        }
+    }
 }
 
-let _indicator;
+function update_show_gesture(dummy) {
+    let enable = Schema.get_boolean('enable-show-gesture');
+    enable_show_gesture(enable);
+}
+
+function init() {
+    Convenience.initTranslations();
+    Schema = Convenience.getSettings();
+}
 
 function enable() {
+    // Update schema-version
+    let schema_version = Schema.get_string('schema-version');
+    if (!schema_version) {
+        Schema.set_string('schema-version', '1.0');
+
+        // enable auto-show on first start
+        let auto_show = new Gio.Settings({schema_id: 'org.onboard.auto-show'});
+        if (auto_show)
+            auto_show.set_boolean('enabled', true);
+    }
+
     _onboard = new Onboard();
     _onboard.enable();
 
-    //Main.onboard = _onboard;   // debug
+    Main.onboard = _onboard;   // debug
+    _onboard.Schema = Schema;
 
     _indicator = new OnboardIndicator();
     Main.panel.addToStatusArea('onboard-menu', _indicator);
+
+    update_show_gesture();
+
+    Schema.connect('changed::enable-show-gesture', update_show_gesture);
 }
 
 function disable() {
+    //Schema.disconnect(enable_show_gesture);
+    enable_show_gesture(false);
     _onboard.disable();
     _onboard = null;
     _indicator.destroy();
+     Schema.run_dispose();
 }
 

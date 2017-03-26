@@ -4,7 +4,7 @@
 # Copyright © 2007-2009 Chris Jones <tortoise@tortuga>
 # Copyright © 2010 Francesco Fumanti <francesco.fumanti@gmx.net>
 # Copyright © 2012 Gerd Kohlberger <lowfi@chello.at>
-# Copyright © 2009, 2011-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2009, 2011-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -568,6 +568,8 @@ class Keyboard(WordSuggestions):
     _alt_locked   = False
     _click_sim    = None
 
+    LOCK_REASON_KEY_PRESSED = "key-pressed"
+
     # Properties
 
     # The number of pressed keys per modifier
@@ -663,6 +665,7 @@ class Keyboard(WordSuggestions):
         self._application = weakref.ref(application)
         self._pressed_key = None
         self._last_typing_time = 0
+        self._last_typed_was_separator = False
 
         self._temporary_modifiers = None
         self._locked_temporary_modifiers = {}
@@ -699,6 +702,9 @@ class Keyboard(WordSuggestions):
 
         self._pending_modifier_redraws = {}
         self._pending_modifier_redraws_timer = Timer()
+
+        self._visibility_locked = False
+        self._visibility_requested = None
 
         self.reset()
 
@@ -740,6 +746,8 @@ class Keyboard(WordSuggestions):
 
         self._pending_modifier_redraws_timer.stop()
         self._pending_modifier_redraws = {}
+
+        self.unlock_visibility()
 
     def cleanup(self):
         """ final cleanup on exit """
@@ -790,13 +798,58 @@ class Keyboard(WordSuggestions):
                 return visible
 
     def set_visible(self, visible):
+        self.unlock_visibility()  # unlock frequenty in case of stuck keys
         self.update_auto_show_on_visibility_change(visible)
+
+        if not visible:
+            self.hide_touch_feedback()
+
         for view in self._layout_views:
             view.set_visible(visible)
 
     def toggle_visible(self):
         """ main method to show/hide onboard manually """
         self.set_visible(not self.is_visible())
+
+    def request_visibility(self, visible):
+        """ Request to change visibility when all keys have been released. """
+        if self._visibility_locked:
+            self._visibility_requested = visible
+        else:
+            self.set_visible(visible)
+
+    def request_visibility_toggle(self):
+        if self._visibility_locked and \
+           self._visibility_requested is not None:
+            visible = self._visibility_requested
+        else:
+            visible = self.is_visible()
+        self.request_visibility(not visible)
+
+    def lock_visibility(self):
+        """ Lock all showing/hiding, but remember requests to do so. """
+        self._visibility_locked = True
+        self.auto_show_lock(self.LOCK_REASON_KEY_PRESSED)
+
+    def unlock_visibility(self):
+        """ Unlock all showing/hiding. """
+        self._visibility_locked = False
+        self._visibility_requested = None
+
+    def unlock_and_apply_visibility(self):
+        """ Unlock all showing/hiding and apply the last request to do so. """
+        if self._visibility_locked:
+            visible = self._visibility_requested
+
+            self.unlock_visibility()
+
+            if visible is not None:
+                self.set_visible(visible)
+
+        # Unlock auto-show, and if the state has changed since locking,
+        # transition to hide the keyboard.
+        self.auto_show_unlock_and_apply_visibility(
+            self.LOCK_REASON_KEY_PRESSED)
 
     def redraw(self, keys=None, invalidate=True):
         for view in self._layout_views:
@@ -999,6 +1052,12 @@ class Keyboard(WordSuggestions):
         return key and self._is_text_insertion_key(key) or \
             time.time() - self._last_typing_time <= 0.5
 
+    def set_last_typed_was_separator(self, value):
+        self._last_typed_was_separator = value
+
+    def get_last_typed_was_separator(self):
+        return self._last_typed_was_separator
+
     def _is_text_insertion_key(self, key):
         """ Does key actually insert any characters (not a navigation key)? """
         return key and key.is_text_changing()
@@ -1026,6 +1085,9 @@ class Keyboard(WordSuggestions):
 
         if key and \
            key.sensitive:
+
+            # Stop hiding the keyboard until all keys have been released.
+            self.lock_visibility()
 
             # stop timed redrawing for this key
             self._unpress_timers.stop(key)
@@ -1143,6 +1205,9 @@ class Keyboard(WordSuggestions):
             self._pressed_key = None
             self.on_all_keys_up()
             gc.enable()
+
+            # Allow hiding the keyboard again (LP #1648543).
+            self.unlock_and_apply_visibility()
 
         # Process pending UI updates
         self.commit_ui_updates()
@@ -1619,6 +1684,8 @@ class Keyboard(WordSuggestions):
 
             # undo temporary suppression of the text display
             WordSuggestions.show_input_line_on_key_release(self, key)
+
+        self.set_last_typed_was_separator(key.is_separator())
 
         # Insert words on button release to avoid having the wordlist
         # change between button press and release.
@@ -2285,6 +2352,14 @@ class Keyboard(WordSuggestions):
         self._auto_show.show_keyboard(not enable)
         self.update_auto_hide()
 
+    def update_tablet_mode_detection(self):
+        enable = config.is_tablet_mode_detection_enabled()
+        self._auto_show.enable_tablet_mode_detection(enable)
+
+    def update_keyboard_device_detection(self):
+        enable = config.is_keyboard_device_detection_enabled()
+        self._auto_show.enable_tablet_mode_detection(enable)
+
     def update_auto_hide(self):
         enabled_before = self._auto_hide.is_enabled()
         enabled_after = config.is_auto_hide_enabled()
@@ -2292,54 +2367,83 @@ class Keyboard(WordSuggestions):
         self._auto_hide.enable(enabled_after)
 
         if enabled_before and not enabled_after:
-            self.resume_auto_show()
+            self._auto_hide.auto_show_unlock()
 
     def update_auto_show_on_visibility_change(self, visible):
         if config.is_auto_show_enabled():
-            if visible and self._auto_show.is_paused():
-                self.lock_auto_show_visible(False)
-                self.resume_auto_show()
+            # showing keyboard while auto-hide is pausing auto-show?
+            if visible and self._auto_hide.is_auto_show_locked():
+                self.auto_show_lock_visible(False)
+                self._auto_hide.auto_show_unlock()
             else:
-                self.lock_auto_show_visible(visible)
+                self.auto_show_lock_visible(visible)
 
-    def lock_auto_show_visible(self, visible):
+            # Make sure to drop the 'key-pressed' lock in case it still
+            # exists due to e.g. stuck keys.
+            if not visible:
+                self.auto_show_unlock(self.LOCK_REASON_KEY_PRESSED)
+
+    def auto_show_lock(self, reason, duration=None,
+                       lock_show=True, lock_hide=True):
+        """
+        Reenable both, hiding and showing.
+        """
+        if config.is_auto_show_enabled():
+            if duration is not None:
+                if duration == 0.0:
+                    return          # do nothing
+
+                if duration < 0.0:  # negative means auto-hide is off
+                    duration = None
+
+            self._auto_show.lock(reason, duration, lock_show, lock_hide)
+
+    def auto_show_unlock(self, reason):
+        """
+        Remove a specific lock named by "reason".
+        """
+        if config.is_auto_show_enabled():
+            self._auto_show.unlock(reason)
+
+    def auto_show_unlock_and_apply_visibility(self, reason):
+        """
+        Remove lock and apply the last requested auto-show state while the
+        lock was applied.
+        """
+        if config.is_auto_show_enabled():
+            visibility = self._auto_show.unlock(reason)
+            if visibility is not None:
+                self._auto_show.request_keyboard_visible(visibility, delay=0)
+
+    def auto_show_lock_and_hide(self, reason, duration=None):
+        """
+        Helper for locking auto-show from AutoHide (hide-on-key-press)
+        and D-Bus property.
+        """
+        if config.is_auto_show_enabled():
+            _logger.debug("auto_show_lock_and_hide({}, {})"
+                          .format(repr(reason), duration))
+
+            # Attempt to hide the keyboard.
+            # If it doesn't hide immediately, e.g. due to currently
+            # pressed keys, we get a second chance the next time
+            # apply_pending_state() is called, i.e. on key-release.
+            if not self._auto_show.is_locked(reason):
+                self._auto_show.request_keyboard_visible(False, delay=0)
+
+            # Block showing the keyboard.
+            self._auto_show.lock(reason, duration, True, False)
+
+    def is_auto_show_locked(self, reason):
+        return self._auto_show.is_locked(reason)
+
+    def auto_show_lock_visible(self, visible):
         """
         If the user unhides onboard, don't auto-hide it until
         he manually hides it again.
         """
         if config.is_auto_show_enabled():
             self._auto_show.lock_visible(visible)
-
-    def is_auto_show_paused(self):
-        return self._auto_show.is_paused()
-
-    def pause_auto_show(self, duration=None):
-        """
-        Stop both, hiding and showing long term.
-        """
-        if config.is_auto_show_enabled():
-            self._auto_show.pause(duration)
-
-    def resume_auto_show(self):
-        """
-        Reenable both, hiding and showing.
-        """
-        if config.is_auto_show_enabled():
-            self._auto_show.resume()
-
-    def freeze_auto_show(self, thaw_time=None):
-        """
-        Stop both, hiding and showing short term.
-        """
-        if config.is_auto_show_enabled():
-            self._auto_show.freeze(thaw_time)
-
-    def thaw_auto_show(self, thaw_time=None):
-        """
-        Reenable both, hiding and showing.
-        """
-        if config.is_auto_show_enabled():
-            self._auto_show.thaw(thaw_time)
 
     def auto_position(self):
         self._broadcast_to_views("auto_position")
@@ -2351,6 +2455,9 @@ class Keyboard(WordSuggestions):
                                                test_clearance, move_clearance,
                                                horizontal=True,
                                                vertical=True):
+        if not self._auto_show:   # may happen on exit, rarely
+            return None
+
         return self._auto_show.get_repositioned_window_rect(
             view, home, limit_rects,
             test_clearance, move_clearance,
@@ -2594,6 +2701,8 @@ class BCHide(ButtonController):
         if config.unity_greeter:
             config.unity_greeter.onscreen_keyboard = False
         else:
+            # No request_keyboard_visible() here, so hide button can
+            # unlock_visibility in case of stuck keys.
             self.keyboard.set_visible(False)
 
     def update(self):

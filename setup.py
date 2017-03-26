@@ -3,9 +3,9 @@
 
 # Copyright © 2007 Martin Böhme <martin.bohm@kubuntu.org>
 # Copyright © 2012-2013 Gerd Kohlberger <lowfi@chello.at>
-# Copyright © 2009-2016 Francesco Fumanti <francesco.fumanti@gmx.net>
+# Copyright © 2009-2017 Francesco Fumanti <francesco.fumanti@gmx.net>
 # Copyright © 2015 Reiner Herrmann <reiner@reiner-h.de>
-# Copyright © 2011-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2011-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -32,6 +32,8 @@ import subprocess
 from os.path import dirname, abspath, join, split
 from distutils.core import Extension, Command
 from distutils      import version
+from distutils.command.build_ext import build_ext
+from distutils.sysconfig import customize_compiler
 from contextlib import contextmanager
 from subprocess import getstatusoutput
 
@@ -70,6 +72,11 @@ def import_path(path):
     yield
     sys.path = old_path
 
+def glob_files(pathname):
+    """ glob without directory names """
+    return [fn for fn in glob.glob(pathname)
+            if os.path.isfile(fn)]
+
 def pkgconfig(*packages, **kw):
     command = "pkg-config --libs --cflags %s" % ' '.join(packages)
     status, output = getstatusoutput(command)
@@ -83,7 +90,7 @@ def pkgconfig(*packages, **kw):
 
     if status != 0:
         print('setup.py: pkg-config returned exit code %d' % status, file=sys.stderr)
-        print('setup.py: sdist needs libgtk-3-dev, libxtst-dev, libxkbfile-dev, libdconf-dev, libcanberra-dev and libhunspell-dev')
+        print('setup.py: sdist needs libgtk-3-dev, libxtst-dev, libxkbfile-dev, libdconf-dev, libcanberra-dev, libhunspell-dev and libudev-dev')
         sys.exit(1)
 
     flag_map = {'-I': 'include_dirs', '-L': 'library_dirs', '-l': 'libraries'}
@@ -191,6 +198,7 @@ class Extension_osk(Extension):
                'osk_hunspell.c',
                'osk_click_mapper.c',
                'osk_uinput.c',
+               'osk_udev.c',
               ]
 
     depends = ['osk_module.h']
@@ -220,11 +228,13 @@ class Extension_osk(Extension):
                            depends = depends,
                            define_macros = defines,
                            extra_compile_args = [
+                               "-Wsign-compare",
                                "-Wdeclaration-after-statement",
                                "-Werror=declaration-after-statement"],
 
                            **pkgconfig('gdk-3.0', 'x11', 'xi', 'xtst', 'xkbfile',
-                                       'dconf', 'libcanberra', 'hunspell')
+                                       'dconf', 'libcanberra', 'hunspell',
+                                       'libudev')
                            )
 
 extension_osk = Extension_osk()
@@ -337,11 +347,45 @@ class TestCommand(Command):
         return True
 
 
+# Custom build_i18n command that overrides the hard-coded
+# auto-start path "share/autostart" in auto.build_i18n_auto
+# for "onboard-autostart.desktop.in"
+class build_i18n_custom(DistUtilsExtra.auto.build_i18n_auto):
+    def run(self):
+        super(build_i18n_custom, self).run()
+
+        for i, file_set in enumerate(self.distribution.data_files):
+            target, files = file_set
+            if target == 'share/autostart':
+                file_set = ('/etc/xdg/autostart', files)
+                self.distribution.data_files[i] = file_set
+
+
+# Custom build_ext command that removes the invalid "-Wstrict-prototypes"
+# warning when compiling C++ (lm extension).
+class build_ext_custom(build_ext):
+    def build_extensions(self):
+        customize_compiler(self.compiler)
+        self._saved_compiler_so = self.compiler.compiler_so
+
+        super(build_ext_custom, self).build_extensions()
+
+    def build_extension(self, ext):
+        if isinstance(ext, Extension_lm):
+            self.compiler.compiler_so = self._saved_compiler_so
+            try:
+                self.compiler.compiler_so.remove("-Wstrict-prototypes")
+            except (AttributeError, ValueError):
+                pass
+
+        super(build_ext_custom, self).build_extension(ext)
+
+
 ##### setup #####
 
 DistUtilsExtra.auto.setup(
     name = 'onboard',
-    version = '1.3.0',
+    version = '1.4.1',
     author = 'Onboard Devel Team',
     author_email = 'https://launchpad.net/~onboard/+contactuser',
     url = 'http://launchpad.net/onboard/',
@@ -359,6 +403,7 @@ DistUtilsExtra.auto.setup(
                   ('share/onboard', glob.glob('NEWS')),
                   ('share/onboard', glob.glob('README')),
                   ('share/onboard', glob.glob('onboard-defaults.conf.example')),
+                  ('share/onboard', glob.glob('onboard-default-settings.gschema.override.example')),
                   ('share/icons/hicolor/16x16/apps', glob.glob('icons/hicolor/16/*')),
                   ('share/icons/hicolor/22x22/apps', glob.glob('icons/hicolor/22/*')),
                   ('share/icons/hicolor/24x24/apps', glob.glob('icons/hicolor/24/*')),
@@ -374,13 +419,13 @@ DistUtilsExtra.auto.setup(
                   ('share/onboard/layouts/images', glob.glob('layouts/images/*')),
                   ('share/onboard/themes', glob.glob('themes/*')),
                   ('share/onboard/scripts', glob.glob('scripts/*')),
-                  ('/etc/xdg/autostart', glob.glob('data/onboard-autostart.desktop')),
-
                   ('share/onboard/models', glob.glob('models/*.lm')),
                   ('share/onboard/tools', glob.glob('Onboard/pypredict/tools/checkmodels')),
 
                   ('share/gnome-shell/extensions/Onboard_Indicator@onboard.org',
-                                    glob.glob('gnome/Onboard_Indicator@onboard.org/*')),
+                      glob_files('gnome/Onboard_Indicator@onboard.org/*')),
+                  ('share/gnome-shell/extensions/Onboard_Indicator@onboard.org/schemas',
+                      glob_files('gnome/Onboard_Indicator@onboard.org/schemas/*')),
                  ],
 
     scripts = ['onboard', 'onboard-settings'],
@@ -390,7 +435,9 @@ DistUtilsExtra.auto.setup(
 
     ext_modules = [extension_osk, extension_lm],
 
-    cmdclass = {'test': TestCommand},
+    cmdclass = {'test': TestCommand,
+                'build_i18n': build_i18n_custom,
+                'build_ext': build_ext_custom},
 )
 
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright © 2012-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2012-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -188,7 +188,7 @@ class XIDeviceManager(EventSource):
         return self.lookup_device_id(device_id)
 
     def get_client_keyboard(self):
-        """ Return client pointer device """
+        """ Return client keyboard device """
         client_pointer = self.get_client_pointer()
         device_id = client_pointer.attachment
         return self.lookup_device_id(device_id)
@@ -287,10 +287,9 @@ class XIDeviceManager(EventSource):
         if window is None:  # use root window?
             xid = 0
         else:
-            win = window.get_window()
-            if not win:
-                return False # no gdk window yet
-            xid = win.get_xid()
+            xid = window.get_xid()
+            if not xid:
+                return False
 
         self._osk_devices.select_events(xid, device.id, mask)
         return True
@@ -299,10 +298,9 @@ class XIDeviceManager(EventSource):
         if window is None:  # use root window?
             xid = 0
         else:
-            win = window.get_window()
-            if not win:
-                return False # no gdk window yet
-            xid = win.get_xid()
+            xid = window.get_xid()
+            if not xid:
+                return False
 
         self._osk_devices.unselect_events(xid, device.id)
         return True
@@ -561,11 +559,7 @@ class XIDeviceEventLogger:
         if not _logger.isEnabledFor(logging.DEBUG):
             self.log_event = self._log_event_stub
 
-    def get_window(self):
-        return None
-
     def _log_device_event(self, event):
-        win = self.get_window()
         if not event.xi_type in [ XIEventType.TouchUpdate,
                                   XIEventType.Motion]:
             self.log_event("Device event: dev_id={} src_id={} xi_type={} "
@@ -575,7 +569,7 @@ class XIDeviceEventLogger:
                                     event.source_id,
                                     event.xi_type,
                                     event.xid_event,
-                                    win.get_xid() if win else 0,
+                                    self.get_xid(),
                                     event.x, event.y,
                                     event.x_root, event.y_root,
                                     event.button, event.state,

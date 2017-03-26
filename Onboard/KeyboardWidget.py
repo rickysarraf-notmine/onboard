@@ -2,7 +2,7 @@
 
 # Copyright © 2009 Chris Jones <tortoise@tortuga>
 # Copyright © 2012 Gerd Kohlberger <lowfi@chello.at>
-# Copyright © 2009, 2011-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2009, 2011-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -42,11 +42,10 @@ from Onboard.TouchHandles   import TouchHandles
 from Onboard.LayoutView     import LayoutView
 from Onboard.utils          import Rect, escape_markup
 from Onboard.Timer          import Timer, FadeTimer
-from Onboard.definitions    import Handle
+from Onboard.definitions    import Handle, HandleFunction
 from Onboard.WindowUtils    import WindowManipulator, \
                                    canvas_to_root_window_rect, \
                                    canvas_to_root_window_point, \
-                                   physical_to_monitor_pixel_size, \
                                    get_monitor_dimensions
 
 ### Logging ###
@@ -230,7 +229,7 @@ class TransitionState:
 
 
 class WindowManipulatorAspectRatio(WindowManipulator):
-    """ Adds support for the ASPECT_RATIO docking handle. """
+    """ Adds support for handles with function ASPECT_RATIO. """
 
     def __init__(self):
         WindowManipulator.__init__(self)
@@ -248,12 +247,12 @@ class WindowManipulatorAspectRatio(WindowManipulator):
     def get_docking_aspect_change_range(self):
         return self._docking_aspect_change_range
 
-    def on_handle_aspect_ratio_pressed(self):
-        self._drag_start_keyboard_frame_rect = self.get_keyboard_frame_rect()
-
     def on_drag_done(self):
         config.window.docking_aspect_change_range = \
             self._docking_aspect_change_range
+
+    def on_handle_aspect_ratio_pressed(self):
+        self._drag_start_keyboard_frame_rect = self.get_keyboard_frame_rect()
 
     def on_handle_aspect_ratio_motion(self, dx, dy):
         keyboard_frame_rect = self._drag_start_keyboard_frame_rect
@@ -1369,8 +1368,7 @@ class KeyboardWidget(Gtk.DrawingArea, WindowManipulatorAspectRatio,
                 GLib.idle_add(self._on_touch_handles_opacity, 1.0, False)
 
     def update_touch_handles_positions(self):
-        self.touch_handles.update_positions(self.canvas_rect,
-                                            self.get_keyboard_frame_rect())
+        self.touch_handles.update_positions(self.get_keyboard_frame_rect())
 
     def _on_draw(self, widget, context):
         context.push_group()
@@ -1416,10 +1414,6 @@ class KeyboardWidget(Gtk.DrawingArea, WindowManipulatorAspectRatio,
         co = self.get_kbd_window().get_orientation_config_object()
         return config.is_keep_docking_frame_aspect_ratio_enabled(co)
 
-    def get_min_window_size(self):
-        min_mm = (50, 20)  # just large enough to grab with a 3 finger gesture
-        return physical_to_monitor_pixel_size(self, min_mm, (150, 100))
-
     def get_frame_width(self):
         """ Width of the frame around the keyboard; canvas coordinates. """
         if config.xid_mode:
@@ -1444,7 +1438,8 @@ class KeyboardWidget(Gtk.DrawingArea, WindowManipulatorAspectRatio,
                 expand = self.get_kbd_window().get_dock_expand()
                 if expand:
                     handles = (Handle.NORTH, Handle.SOUTH,
-                               Handle.MOVE, Handle.ASPECT_RATIO)
+                               Handle.WEST, Handle.EAST,
+                               Handle.MOVE)
                 else:
                     handles = Handle.RESIZE_MOVE
             else:
@@ -1456,6 +1451,14 @@ class KeyboardWidget(Gtk.DrawingArea, WindowManipulatorAspectRatio,
                 handles = tuple(set(handles).intersection(set(config_handles)))
 
         return handles
+
+    def get_handle_function(self, handle):
+        if handle in (Handle.WEST, Handle.EAST) and \
+           config.is_docking_enabled() and \
+           self.get_kbd_window().get_dock_expand():
+               return HandleFunction.ASPECT_RATIO
+               
+        return HandleFunction.NORMAL    
 
     def get_click_type_button_rects(self):
         """
