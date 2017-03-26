@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright © 2012-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2012-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -35,7 +35,7 @@ except ImportError as e:
 from Onboard.AtspiStateTracker import AtspiStateTracker, AtspiStateType
 from Onboard.TextDomain        import TextDomains
 from Onboard.TextChanges       import TextChanges, TextSpan
-from Onboard.utils             import KeyCode
+from Onboard.utils             import KeyCode, unicode_str
 from Onboard.Timer             import Timer
 from Onboard                   import KeyCommon
 
@@ -215,8 +215,7 @@ class AtspiTextContext(TextContext):
     def get_character_extents(self, offset):
         accessible = self._accessible
         if accessible:
-            return self._state_tracker.get_accessible_character_extents(
-                accessible, offset)
+            return accessible.get_character_extents(offset)
         else:
             return None
 
@@ -262,7 +261,7 @@ class AtspiTextContext(TextContext):
         """
         Can delete or insert text into the accessible?
         """
-        #return False # support for inserting is spotty: not in firefox, terminal
+        # support for inserting is spotty: not in firefox, terminal
         return bool(self._accessible) and self._can_insert_text
 
     def delete_text(self, offset, length=1):
@@ -271,14 +270,20 @@ class AtspiTextContext(TextContext):
 
     def delete_text_before_caret(self, length=1):
         """ Delete directly, without going through faking key presses. """
-        offset = self._accessible.get_caret_offset()
-        self.delete_text(offset - length, length)
+        try:
+            caret_offset = self._accessible.get_caret_offset()
+        except Exception as ex:  # Private exception gi._glib.GError when
+            _logger.info("TextContext.delete_text_before_caret(): " +
+                         unicode_str(ex))
+            return
+
+        self.delete_text(caret_offset - length, length)
 
     def insert_text(self, offset, text):
         """
         Insert directly, without going through faking key presses.
         """
-        self._accessible.insert_text(offset, text, -1)
+        self._accessible.insert_text(offset, text)
 
         # Move the caret after insertion if the accessible itself
         # hasn't done so already. This assumes the insertion begins at
@@ -286,7 +291,13 @@ class AtspiTextContext(TextContext):
         # currently.
         # Only the nautilus rename text entry appears to need this.
         offset_before = offset
-        offset_after = self._accessible.get_caret_offset()
+        try:
+            offset_after = self._accessible.get_caret_offset()
+        except Exception as ex:  # Private exception gi._glib.GError when
+            _logger.info("TextContext.insert_text(): " +
+                         unicode_str(ex))
+            return
+
         if text and offset_before == offset_after:
             self._accessible.set_caret_offset(offset_before + len(text))
 
@@ -295,8 +306,14 @@ class AtspiTextContext(TextContext):
         Insert directly, without going through faking key presses.
         Fails for terminal and firefox, unfortunately.
         """
-        offset = self._accessible.get_caret_offset()
-        self.insert_text(offset, text)
+        try:
+            caret_offset = self._accessible.get_caret_offset()
+        except Exception as ex:  # Private exception gi._glib.GError when
+            _logger.info("TextContext.insert_text_at_caret(): " +
+                         unicode_str(ex))
+            return
+
+        self.insert_text(caret_offset, text)
 
     def _register_atspi_listeners(self, register=True):
         st = self._state_tracker
@@ -311,10 +328,8 @@ class AtspiTextContext(TextContext):
             st.disconnect("text-caret-moved", self._on_text_caret_moved)
             # st.disconnect("key-pressed", self._on_atspi_key_pressed)
 
-    def get_accessible_capabilities(self, accessible, **kwargs):
+    def get_accessible_capabilities(self, accessible):
         can_insert_text = False
-        attributes = kwargs.get("attributes", {})
-        interfaces = kwargs.get("interfaces", [])
 
         if accessible:
 
@@ -322,13 +337,13 @@ class AtspiTextContext(TextContext):
             # Advantages:
             # - faster, no individual key presses
             # - trouble-free insertion of all unicode characters
-            if "EditableText" in interfaces:
+            if "EditableText" in accessible.get_interfaces():
                 # Support for atspi text insertion is spotty.
                 # Firefox, LibreOffice Writer, gnome-terminal don't support it,
                 # even if they claim to implement the EditableText interface.
 
                 # Allow direct text insertion for gtk widgets
-                if self._state_tracker.is_toolkit_gtk3(attributes):
+                if accessible.is_toolkit_gtk3():
                     can_insert_text = True
 
         return can_insert_text
@@ -342,15 +357,23 @@ class AtspiTextContext(TextContext):
         self._entering_text = False
         self._text_changed = False
 
+        # make sure state is filled with essential entries
+        if accessible:
+            accessible.get_role()
+            accessible.get_attributes()
+            accessible.get_interfaces()
+            accessible.is_urlbar()
+            state = accessible.get_state()
+        else:
+            state = {}
+
         # select text domain matching this accessible
-        state = self._state_tracker.get_state() \
-                if self._accessible else {}
         self._text_domain = self._text_domains.find_match(**state)
         self._text_domain.init_domain()
 
         # determine capabilities of this accessible
         self._can_insert_text = \
-            self.get_accessible_capabilities(accessible, **state)
+            self.get_accessible_capabilities(accessible)
 
         # log accessible info
         if _logger.isEnabledFor(_logger.LEVEL_ATSPI):
@@ -358,8 +381,8 @@ class AtspiTextContext(TextContext):
             log("-" * 70)
             log("Accessible focused: ")
             indent = " " * 4
-            if self._accessible:
-                state = self._state_tracker.get_state()
+            if accessible:
+                state = accessible.get_all_state()
                 for key, value in sorted(state.items()):
                     msg = str(key) + "="
                     if key == "state-set":
@@ -389,8 +412,9 @@ class AtspiTextContext(TextContext):
         if insertion_span:
             try:
                 caret_offset = self._accessible.get_caret_offset()
-            except:  # gi._glib.GError
-                pass
+            except Exception as ex:  # Private exception gi._glib.GError when
+                _logger.info("TextContext._on_text_changed(): " +
+                            unicode_str(ex))
             else:
                 self._wp.on_text_inserted(insertion_span, caret_offset)
 
@@ -466,9 +490,12 @@ class AtspiTextContext(TextContext):
                     # simple span for current insertion
                     begin = max(pos - 100, 0)
                     end = min(pos + length + 100, char_count)
-                    text = self._state_tracker.get_accessible_text(accessible,
-                                                                   begin, end)
-                    if text is not None:
+                    try:
+                        text = accessible.get_text(begin, end)
+                    except Exception as ex:
+                        _logger.info("TextContext._record_text_change() 1: " +
+                                     unicode_str(ex))
+                    else:
                         insertion_span = TextSpan(pos, length, text, begin)
                 else:
                     # Remember nothing, just update existing spans.
@@ -487,7 +514,12 @@ class AtspiTextContext(TextContext):
                 # include whole words at beginning and end.
                 begin = max(span.begin() - 100, 0)
                 end = min(span.end() + 100, char_count)
-                span.text = Atspi.Text.get_text(accessible, begin, end)
+                try:
+                    span.text = accessible.get_text(begin, end)
+                except Exception as ex:
+                    _logger.info("TextContext._record_text_change() 2: " +
+                                 unicode_str(ex))
+                    span.text = ""
                 span.text_pos = begin
 
         self._text_changed = True
@@ -515,7 +547,7 @@ class AtspiTextContext(TextContext):
                    self._pending_separator_span.begin():
                     self.set_pending_separator(None)
 
-        result = self._text_domain.read_context(self._accessible)
+        result = self._text_domain.read_context(self._wp, self._accessible)
         if result is not None:
             (self._context,
              self._line,

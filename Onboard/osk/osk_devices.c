@@ -1,6 +1,6 @@
 /*
  * Copyright © 2011-2012 Gerd Kohlberger <lowfi@chello.at>
- * Copyright © 2011-2015 marmuta <marmvta@gmail.com>
+ * Copyright © 2011-2016 marmuta <marmvta@gmail.com>
  *
  * This file is part of Onboard.
  *
@@ -65,7 +65,8 @@ typedef struct {
     double       y_root;
     unsigned int button;
     unsigned int state;
-    unsigned int keyval;
+    unsigned int keycode;
+    unsigned int keyval;   // translated keycode (keysym on X)
     unsigned int sequence;
     unsigned int time;
 
@@ -123,6 +124,7 @@ osk_device_event_copy (OskDeviceEvent* self, PyObject *args)
         ev->y_root = self->y_root;
         ev->button = self->button;
         ev->state = self->state;
+        ev->keycode = self->keycode;
         ev->keyval = self->keyval;
         ev->sequence = self->sequence;
         ev->time = self->time;
@@ -180,6 +182,7 @@ static PyMemberDef osk_device_event_members[] = {
     {"y_root", T_DOUBLE, offsetof(OskDeviceEvent, y_root), RESTRICTED, NULL },
     {"button", T_UINT, offsetof(OskDeviceEvent, button), RESTRICTED, NULL },
     {"state", T_UINT, offsetof(OskDeviceEvent, state), RESTRICTED, NULL },
+    {"keycode", T_UINT, offsetof(OskDeviceEvent, keycode), READONLY, NULL },
     {"keyval", T_UINT, offsetof(OskDeviceEvent, keyval), READONLY, NULL },
     {"sequence", T_UINT, offsetof(OskDeviceEvent, sequence), RESTRICTED, NULL },
     {"time", T_UINT, offsetof(OskDeviceEvent, time), READONLY, NULL },
@@ -476,6 +479,7 @@ osk_devices_call_event_handler_key (OskDevices *dev,
                                     Display*    display,
                                     int         device_id,
                                     int         source_id,
+                                    int         keycode,
                                     int         keyval
 )
 {
@@ -487,6 +491,7 @@ osk_devices_call_event_handler_key (OskDevices *dev,
         ev->type = translate_event_type(type);
         ev->device_id = device_id;
         ev->source_id = source_id;
+        ev->keycode = keycode;
         ev->keyval = keyval;
 
         queue_event (dev, ev, False);
@@ -571,7 +576,7 @@ translate_state (XIModifierState *mods_state,
 
     if (button_state)
     {
-        int n = MIN (G_N_ELEMENTS(gdk_button_masks), button_state->mask_len * 8);
+        int n = MIN ((int)G_N_ELEMENTS(gdk_button_masks), button_state->mask_len * 8);
         int i;
         for (i = 0; i < n; i++)
             if (XIMaskIsSet (button_state->mask, i))
@@ -656,7 +661,7 @@ get_master_state (OskDevices* dev)
 static unsigned int
 get_current_state (OskDevices* dev)
 {
-    int i;
+    gsize i;
 
     // Get out-of-sync master state, for key state mainly.
     // Button state will be out-dated immediately before or after
@@ -684,7 +689,7 @@ static void
 update_state (int evtype, XIDeviceEvent* event, OskDevices* dev)
 {
     int button = event->detail;
-    if (button >= 1 && button < G_N_ELEMENTS(dev->button_states))
+    if (button >= 1 && button < (int)G_N_ELEMENTS(dev->button_states))
     {
         int* count = dev->button_states + (button-1);
         if (evtype == XI_ButtonPress)
@@ -883,19 +888,20 @@ osk_devices_event_filter (GdkXEvent  *gdk_xevent,
             case XI_KeyPress:
             {
                 XIDeviceEvent *event = cookie->data;
-                int            keyval;
 
                 if (!(event->flags & XIKeyRepeat))
                 {
-                    keyval = osk_devices_translate_keycode (event->detail,
-                                                            &event->group,
-                                                            &event->mods);
+                    int keycode = event->detail;
+                    int keyval = osk_devices_translate_keycode (keycode,
+                                                                &event->group,
+                                                                &event->mods);
                     if (keyval)
                         osk_devices_call_event_handler_key (dev,
                                                             evtype,
                                                             event->display,
                                                             event->deviceid,
                                                             event->sourceid,
+                                                            keycode,
                                                             keyval);
                 }
                 break;
@@ -904,17 +910,17 @@ osk_devices_event_filter (GdkXEvent  *gdk_xevent,
             case XI_KeyRelease:
             {
                 XIDeviceEvent *event = cookie->data;
-                int            keyval;
-
-                keyval = osk_devices_translate_keycode (event->detail,
-                                                        &event->group,
-                                                        &event->mods);
+                int keycode = event->detail;
+                int keyval = osk_devices_translate_keycode (event->detail,
+                                                            &event->group,
+                                                            &event->mods);
                 if (keyval)
                     osk_devices_call_event_handler_key (dev,
                                                         evtype,
                                                         event->display,
                                                         event->deviceid,
                                                         event->sourceid,
+                                                        keycode,
                                                         keyval);
                 break;
             }

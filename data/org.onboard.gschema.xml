@@ -1,6 +1,6 @@
 <!--
 Copyright © 2012 Gerd Kohlberger <lowfi@chello.at>
-Copyright © 2011-2016 marmuta <marmvta@gmail.com>
+Copyright © 2011-2017 marmuta <marmvta@gmail.com>
 
 This file is part of Onboard.
 
@@ -52,7 +52,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
             <description>Switch onboard themes of matching basenames in sync with the current GTK-theme.</description>
         </key>
         <key name="system-theme-associations" type="a{ss}">
-            <default>{'HighContrast' : 'HighContrast', 'HighContrastInverse' : 'HighContrastInverse', 'LowContrast' : 'LowContrast'}</default>
+            <default>{'HighContrast' : 'HighContrast', 'HighContrastInverse' : 'HighContrastInverse', 'LowContrast' : 'LowContrast', 'ContrastHighInverse' : 'HighContrastInverse'}</default>
             <summary>System theme associations</summary>
             <description>List of encountered system themes (GTK-themes) and the Onboard themes they are linked to.</description>
         </key>
@@ -72,11 +72,6 @@ If unavailable, 'AppIndicator' falls back to GtkStatusIcon.
             <default>false</default>
             <summary>Start onboard with a minimized window.</summary>
             <description>Do not display the onboard window on start; start onboard minimized.</description>
-        </key>
-        <key name="xembed-onboard" type="b">
-            <default>false</default>
-            <summary>Show onboard when unlocking the screen.</summary>
-            <description>Make onboard appear in conjunction to the dialog to unlock the screen.</description>
         </key>
         <key name="show-tooltips" type="b">
             <default>true</default>
@@ -103,6 +98,33 @@ If unavailable, 'AppIndicator' falls back to GtkStatusIcon.
             <summary>Current settings page</summary>
             <description>Current tab page of onboard-settings.</description>
         </key>
+        <key name="xembed-onboard" type="b">
+            <default>false</default>
+            <summary>Show onboard when unlocking the screen.</summary>
+            <description>Make onboard appear in conjunction to the dialog to unlock the screen.</description>
+        </key>
+        <key name="xembed-aspect-change-range" type="ad">
+            <default>[0, 1.6]</default>
+            <summary>Aspect range while embedded</summary>
+            <description>Limits of the keyboard's aspect ratio when it is embedded, i.e. in unity-greeter, gnome-screensaver.</description>
+        </key>
+        <key name="xembed-background-color" type="s">
+            <default>'#0000007F'</default>
+            <summary>Background color when embedded</summary>
+            <description>Color of the background bar that is rendered on top of the background image in unity-greeter and gnome-screensaver. If empty, the color is taken from the keyboard's current background color.'</description>
+        </key>
+        <key name="xembed-background-image-enabled" type="b">
+            <default>true</default>
+            <summary>Enable drawing background image when embedded</summary>
+            <description>Enable drawing the current GNOME background image in unity-greeter and gnome-screensaver.</description>
+        </key>
+        <key name="xembed-unity-greeter-offset-x" type="d">
+            <default>85.0</default>
+            <summary>Horizontal position in unity-greeter</summary>
+            <description>Maximum distance of the keyboard in unity-greeter in pixels from the left screen edge. Depending on the available width, the offset is gradually lowered. Negative values center the keyboard horizontally. 
+This key has no effect outside of unity-greeter.</description>
+        </key>
+
         <child name="auto-show" schema="org.onboard.auto-show" />
         <child name="keyboard" schema="org.onboard.keyboard" />
         <child name="window" schema="org.onboard.window" />
@@ -143,13 +165,50 @@ If unavailable, 'AppIndicator' falls back to GtkStatusIcon.
         </key>
         <key name="hide-on-key-press" type="b">
             <default>true</default>
-            <summary>Hide on key-press.</summary>
+            <summary>Hide on key-press</summary>
             <description>Hide Onboard when pressing any key on a physical keyboard.</description>
         </key>
         <key name="hide-on-key-press-pause" type="d">
             <default>1800.0</default>
             <summary>Auto-show pause after key-press.</summary>
             <description>Number of seconds auto-show remains paused after a physical key-press. -1.0 to pause forever.</description>
+        </key>
+
+        <key name="tablet-mode-detection-enabled" type="b">
+            <default>true</default>
+            <summary>Enable tablet/laptop mode detection</summary>
+            <description>Enable listening to lock-key-code and unlock-key-code and lock/unlock auto-show in response.</description>
+        </key>
+        <key name="tablet-mode-enter-key" type="i">
+            <default>0</default>
+            <summary>Key-code to unlock auto-show</summary>
+            <description>When this key-press is received, resume auto-show. A convertible device might signal entering tablet-mode that way.</description>
+        </key>
+        <key name="tablet-mode-leave-key" type="i">
+            <default>0</default>
+            <summary>Key-code to lock auto-show</summary>
+            <description>When this key-press is received, stop auto-show indefinitely. A convertible device might signal entering laptop-mode that way.</description>
+        </key>
+        <key name="tablet-mode-state-file" type="s">
+            <default>''</default>
+            <summary>Name of tablet mode state file</summary>
+            <description>Path to a text file indicating whether tablet-mode is active or not, e.g. a sysfs path.</description>
+        </key>
+        <key name="tablet-mode-state-file-pattern" type="s">
+            <default>'1'</default>
+            <summary>Pattern for tablet-mode-state-file</summary>
+            <description>String to find in 'tablet-mode-state-file' in order to detect tablet-mode, e.g. 1.</description>
+        </key>
+
+        <key name="keyboard-device-detection-enabled" type="b">
+            <default>false</default>
+            <summary>Enable detection of keyboard devices</summary>
+            <description>If enabled, auto-show will be paused while physical keyboard devices are connected.</description>
+        </key>
+        <key name="keyboard-device-detection-exceptions" type="as">
+            <default>[]</default>
+            <summary>Keyboard devices to ignore</summary>
+            <description>List of keyboard devices that should not pause auto-show.</description>
         </key>
     </schema>
 

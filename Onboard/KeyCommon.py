@@ -3,7 +3,7 @@
 # Copyright © 2007 Martin Böhme <martin.bohm@kubuntu.org>
 # Copyright © 2008-2009 Chris Jones <tortoise@tortuga>
 # Copyright © 2010 Francesco Fumanti <francesco.fumanti@gmx.net>
-# Copyright © 2009, 2011-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2009, 2011-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -446,6 +446,11 @@ class KeyCommon(LayoutItem):
         id = self.id
         return (id == "RTRN" or
                 id == "KPEN")
+
+    def is_separator(self):
+        id = self.id
+        return (id == "SPCE" or
+                id == "TAB")
 
     def is_separator_cancelling(self):
         """ Should this key cancel pending word separators? """

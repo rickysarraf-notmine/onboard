@@ -1,4 +1,4 @@
-Onboard 1.3.0
+Onboard 1.4.1
 -------------
 
 Description:
@@ -26,8 +26,8 @@ Description:
 D-Bus Service:
 
     Once running, Onboard provides a D-Bus service at the bus name
-    'org.onboard.Onboard', that allows other processes to control the
-    visibiliy of the keyboard window.
+    'org.onboard.Onboard', that allows other processes to control 
+    the keyboard window.
 
     Interface 'org.onboard.Onboard.Keyboard':
 
@@ -71,6 +71,27 @@ D-Bus Service:
         /org/onboard/Onboard/Keyboard org.freedesktop.DBus.Properties.Get 
         string:"org.onboard.Onboard.Keyboard" string:"Visible"
 
+    AutoShowPaused, Boolean property, read-write
+        True pauses auto-show and hides the keyboard.
+        False resumes auto-show.
+        You are free to write to this property, e.g. when entering/leaving 
+        tablet mode of a convertible device (and Onboard's built-in detection
+        isn't sufficient).
+        This property is not persistent. It will be reset to 'false' each time
+        Onboard is restarted.
+
+        Signal: org.freedesktop.DBus.Properties.PropertiesChanged
+
+        Example, reading:
+        dbus-send --type=method_call --print-reply --dest=org.onboard.Onboard 
+        /org/onboard/Onboard/Keyboard org.freedesktop.DBus.Properties.Get 
+        string:"org.onboard.Onboard.Keyboard" string:"AutoShowPaused"
+
+        Example, writing:
+        dbus-send --type=method_call --print-reply --dest=org.onboard.Onboard 
+        /org/onboard/Onboard/Keyboard org.freedesktop.DBus.Properties.Set 
+        string:"org.onboard.Onboard.Keyboard" string:"AutoShowPaused" 
+        variant:boolean:"true"
 
 Getting Onboard:
 
@@ -104,7 +125,19 @@ Building from Source:
         bzr branch lp:onboard
         cd onboard
         ./setup.py build
+        tools/install_gsettings_schema
+
+        # At this point you should be able to start Onboard
+        # from the project directory with
+        ./onboard
+
+        # If everything works as expected, install with
         sudo ./setup.py install
+
+        # And if necessary, uninstall with
+        sudo ./setup.py install --record files.txt
+        sudo xargs -a files.txt --delimiter='\n' rm -v
+        sudo rm -rf /usr/local/share/onboard
 
 
     Mageia 4:
@@ -120,8 +153,21 @@ Building from Source:
         bzr branch lp:onboard
         cd onboard
         ./setup.py build
+        tools/install_gsettings_schema
+
+        # At this point you should be able to start Onboard
+        # from the project directory with
+        ./onboard
+
+        # If everything works as expected, install with
         su
         ./setup.py install
+
+        # And if necessary, uninstall with
+        su
+        ./setup.py install --record files.txt
+        sudo xargs -a files.txt --delimiter='\n' rm -v
+        sudo rm -rf /usr/local/share/onboard
 
 
     Ubuntu 14.04:

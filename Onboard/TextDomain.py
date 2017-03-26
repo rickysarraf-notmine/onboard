@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright © 2012-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2012-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -77,7 +77,7 @@ class TextDomain:
         """ Called on being selected as the currently active domain. """
         pass
 
-    def read_context(self, accessible):
+    def read_context(self, keyboard, accessible):
         return NotImplementedError()
 
     def get_text_begin_marker(self):
@@ -265,6 +265,7 @@ class TextDomain:
                     end = max(end, span[1])
 
         return begin + offset, end - begin, text[begin:end]
+
     def can_record_insertion(self, accessible, pos, length):
         return True
 
@@ -320,7 +321,7 @@ class DomainNOP(TextDomain):
     def matches(self, **kwargs):
         return True
 
-    def read_context(self, accessible):
+    def read_context(self, keyboard, accessible):
         return "", "", 0, TextSpan(), False, 0
 
     def get_auto_separator(self, context):
@@ -344,60 +345,60 @@ class DomainGenericText(TextDomain):
     def matches(self, **kwargs):
         return TextDomain.matches(self, **kwargs)
 
-    def read_context(self, accessible):
+    def read_context(self, keyboard, accessible):
         """ Extract prediction context from the accessible """
 
         # get caret position from selection
-        selection = None
-        try:
-            sel = accessible.get_selection(0)
-            # Gtk-2 applications return 0,0 when there is no selection.
-            # Gtk-3 applications return caret positions in that case.
-            # LibreOffice Writer in Vivid initially returns -1,-1 when there
-            # is no selection, later the caret position.
-            start = sel.start_offset
-            end = sel.end_offset
-            if start > 0 and \
-               end > 0 and \
-               start <= end:
-                selection = (sel.start_offset, sel.end_offset)
-        except Exception as ex: # Private exception gi._glib.GErro
-            _logger.info("DomainGenericText.read_context(), selection: " \
-                         + unicode_str(ex))
+        selection = accessible.get_selection()
 
         # get text around the caret position
         try:
+            count = accessible.get_character_count()
+
             if selection is None:
                 offset = accessible.get_caret_offset()
+
+                # In Zesty, firefox 50.1 often returns caret position -1
+                # when typing into the urlbar. Assume we are at the end
+                # of the text when that happens.
+                if offset < 0:
+                    _logger.warning("DomainGenericText.read_context(): "
+                                    "Atspi.Text.get_caret_offset() "
+                                    "returned invalid {}. "
+                                    "Pretending the cursor is at the end "
+                                    "of the text at offset {}."
+                                    .format(offset, count))
+                    offset = count
+
                 selection = (offset, offset)
-            r = accessible.get_text_at_offset(selection[0],
-                                Atspi.TextBoundaryType.LINE_START)
-            count = accessible.get_character_count()
-        except Exception as ex: # Private exception gi._glib.GError when
-                                # gedit became unresponsive.
-            _logger.info("DomainGenericText.read_context(), text: " \
-                         + unicode_str(ex))
+
+            r = accessible.get_text_at_offset(
+                selection[0], Atspi.TextBoundaryType.LINE_START)
+        except Exception as ex:     # Private exception gi._glib.GError when
+                                    # gedit became unresponsive.
+            _logger.info("DomainGenericText.read_context(), text: " +
+                         unicode_str(ex))
             return None
 
-        line = unicode_str(r.content).replace("\n","")
+        line = unicode_str(r.content).replace("\n", "")
         line_caret = max(selection[0] - r.start_offset, 0)
 
         begin = max(selection[0] - 256, 0)
         end   = min(selection[0] + 100, count)
         try:
-            text = Atspi.Text.get_text(accessible, begin, end)
-        except Exception as ex: # Private exception gi._glib.GError when
-                                # gedit became unresponsive.
-            _logger.info("DomainGenericText.read_context(), text2: " \
-                         + unicode_str(ex))
+            text = accessible.get_text(begin, end)
+        except Exception as ex:     # Private exception gi._glib.GError when
+                                    # gedit became unresponsive.
+            _logger.info("DomainGenericText.read_context(), text2: " +
+                         unicode_str(ex))
             return None
 
         text = unicode_str(text)
 
         # Not all text may be available for large selections. We only need the
         # part before the begin of the selection/caret.
-        selection_span = TextSpan(selection[0], selection[1]-selection[0],
-                              text, begin)
+        selection_span = TextSpan(selection[0], selection[1] - selection[0],
+                                  text, begin)
         context = text[:selection[0] - begin]
         begin_of_text = begin == 0
         begin_of_text_offset = 0
@@ -466,21 +467,22 @@ class DomainTerminal(TextDomain):
     def init_domain(self):
         pass
 
-    def read_context(self, accessible, offset=None):
+    def read_context(self, keyboard, accessible):
         """
         Extract prediction context from the accessible
         """
-        if offset is None:
-            try:
-                offset = accessible.get_caret_offset()
-            except Exception as ex:     # Private exception gi._glib.GError
-                                        # when gedit became unresponsive.
-                _logger.info("DomainTerminal.read_context(): " +
-                             unicode_str(ex))
-                return None
+        try:
+            offset = accessible.get_caret_offset()
+        except Exception as ex:     # Private exception gi._glib.GError
+                                    # when gedit became unresponsive.
+            _logger.info("DomainTerminal.read_context(): " +
+                         unicode_str(ex))
+            return None
 
         context_lines, prompt_length, line, line_start, line_caret = \
-            self._get_text_after_prompt(accessible, offset)
+            self._get_text_after_prompt(
+                accessible, offset,
+                keyboard.get_last_typed_was_separator())
 
         if prompt_length:
             begin_of_text = True
@@ -499,7 +501,8 @@ class DomainTerminal(TextDomain):
                   begin_of_text, begin_of_text_offset)
         return result
 
-    def _get_text_after_prompt(self, accessible, caret_offset):
+    def _get_text_after_prompt(self, accessible, caret_offset,
+                               last_typed_was_separator=None):
         """
         Return text from the input area of the terminal after the prompt.
 
@@ -519,6 +522,8 @@ class DomainTerminal(TextDomain):
         ...         return r
         ...     def get_text_before_offset(self, offset, boundary):
         ...         return self.get_text_at_offset(offset - self._width, boundary)
+        ...     def is_byobu(self):
+        ...         return False
 
         >>> d = DomainTerminal()
 
@@ -551,16 +556,25 @@ class DomainTerminal(TextDomain):
 
         """
 
-        r = accessible.get_text_at_offset(caret_offset,
-                            Atspi.TextBoundaryType.LINE_START)
+        r = accessible.get_text_at_offset(
+            caret_offset, Atspi.TextBoundaryType.LINE_START)
         line = unicode_str(r.content)
         line_start = r.start_offset
         line_caret = caret_offset - line_start
-
         # remove prompt from the current or previous lines
         context_lines = []
         prompt_length = None
         l = line[:line_caret]
+
+        # Zesty: byobu running in gnome-terminal doesn't report trailing
+        # spaces in text and caret-position.
+        # Awful hack: assume there is always a trailing space when the caret
+        # is at the end of the line and we just typed a separator.
+        if line[line_caret:] == "\n" and \
+           last_typed_was_separator and \
+           accessible.is_byobu():
+            l += " "
+
         for i in range(2):
 
             # matching blacklisted prompt? -> cancel whole context
@@ -580,8 +594,8 @@ class DomainTerminal(TextDomain):
 
             # no prompt yet -> let context reach
             # across one more line break
-            r = accessible.get_text_before_offset(caret_offset,
-                                Atspi.TextBoundaryType.LINE_START)
+            r = accessible.get_text_before_offset(
+                caret_offset, Atspi.TextBoundaryType.LINE_START)
             l = unicode_str(r.content)
 
         result = (context_lines, prompt_length,
@@ -648,13 +662,8 @@ class DomainTerminal(TextDomain):
 class DomainURL(DomainGenericText):
     """ (Firefox) address bar """
 
-    def matches(self,  **kwargs):
-        attributes = kwargs.get("attributes")
-        if attributes:
-            # firefox url bar?
-            if "urlbar" in attributes.get("class", ""):
-                return True
-        return False
+    def matches(self, **kwargs):
+        return kwargs.get("is_urlbar", False)
 
     def get_auto_separator(self, context):
         """

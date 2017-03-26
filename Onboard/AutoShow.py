@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright © 2012-2016 marmuta <marmvta@gmail.com>
+# Copyright © 2012-2017 marmuta <marmvta@gmail.com>
 #
 # This file is part of Onboard.
 #
@@ -20,20 +20,20 @@
 
 from __future__ import division, print_function, unicode_literals
 
+import collections
+
 from Onboard.AtspiStateTracker import AtspiStateTracker
+from Onboard.HardwareSensorTracker import HardwareSensorTracker
+from Onboard.UDevTracker       import UDevTracker
 from Onboard.utils             import Rect
 from Onboard.Timer             import TimerOnce
 from Onboard.definitions       import RepositionMethodEnum
 
-### Logging ###
 import logging
 _logger = logging.getLogger("AutoShow")
-###############
 
-### Config Singleton ###
 from Onboard.Config import Config
 config = Config()
-########################
 
 
 class AutoShow(object):
@@ -47,115 +47,192 @@ class AutoShow(object):
     SHOW_REACTION_TIME = 0.0
     HIDE_REACTION_TIME = 0.3
 
-    _lock_visible = False
-    _frozen = False
-    _paused = False
     _keyboard = None
-    _state_tracker = AtspiStateTracker()
+
+    _lock_visible = False
+    _locks = None
+
+    _atspi_state_tracker = None
+    _hw_sensor_tracker = None
+    _udev_tracker = None
 
     def __init__(self, keyboard):
         self._keyboard = keyboard
         self._auto_show_timer = TimerOnce()
-        self._pause_timer = TimerOnce()
-        self._thaw_timer = TimerOnce()
         self._active_accessible = None
+        self._locks = collections.OrderedDict()
 
     def reset(self):
         self._auto_show_timer.stop()
-        self._pause_timer.stop()
-        self._thaw_timer.stop()
-        self._frozen = False
-        self._paused = False
+        self.unlock_all()
 
     def cleanup(self):
         self.reset()
-        self.enable(False)  # disconnect atspi events
+        self.enable(False)  # disconnect events
+
+    def update(self):
+        self.enable_(config.is_auto_show_enabled())
 
     def enable(self, enable):
         if enable:
-            self._state_tracker.connect("text-entry-activated",
-                                        self._on_text_entry_activated)
-            self._state_tracker.connect("text-caret-moved",
-                                        self._on_text_caret_moved)
+            if not self._atspi_state_tracker:
+                self._atspi_state_tracker = AtspiStateTracker()
+                self._atspi_state_tracker.connect(
+                    "text-entry-activated", self._on_text_entry_activated)
+                self._atspi_state_tracker.connect(
+                    "text-caret-moved", self._on_text_caret_moved)
         else:
-            self._state_tracker.disconnect("text-entry-activated",
-                                        self._on_text_entry_activated)
-            self._state_tracker.disconnect("text-caret-moved",
-                                        self._on_text_caret_moved)
+            if self._atspi_state_tracker:
+                self._atspi_state_tracker.disconnect(
+                    "text-entry-activated", self._on_text_entry_activated)
+                self._atspi_state_tracker.disconnect(
+                    "text-caret-moved", self._on_text_caret_moved)
+            self._atspi_state_tracker = None
+            self._active_accessible = None  # stop using _atspi_state_tracker
 
         if enable:
             self._lock_visible = False
-            self._frozen = False
+            self._locks.clear()
 
-    def is_paused(self):
-        return self._paused
+        self.enable_tablet_mode_detection(
+            enable and config.is_tablet_mode_detection_enabled())
 
-    def pause(self, duration = None):
-        """
-        Stop showing and hiding the keyboard window for longer time periods,
-        e.g. after pressing a key on a physical keyboard.
+        self.enable_keyboard_device_detection(
+            enable and config.is_keyboard_device_detection_enabled())
 
-        duration in seconds, None to pause forever.
-        """
-        self._paused = True
-        self._pause_timer.stop()
-        if not duration is None:
-            self._pause_timer.start(duration, self.resume)
+    def enable_tablet_mode_detection(self, enable):
+        if enable:
+            if not self._hw_sensor_tracker:
+                self._hw_sensor_tracker = HardwareSensorTracker()
+                self._hw_sensor_tracker.connect(
+                    "tablet-mode-changed", self._on_tablet_mode_changed)
 
-        # Discard pending hide/show actions.
-        self._auto_show_timer.stop()
-
-    def resume(self):
-        """
-        Allow hiding and showing the keyboard window again.
-        """
-        self._pause_timer.stop()
-        self._paused = False
-
-    def is_frozen(self):
-        return self._frozen
-
-    def freeze(self, thaw_time = None):
-        """
-        Disable showing and hiding the keyboard window for short periods,
-        e.g. to skip unexpected focus events.
-        thaw_time in seconds, None to freeze forever.
-        """
-        self._frozen = True
-        self._thaw_timer.stop()
-        if not thaw_time is None:
-            self._thaw_timer.start(thaw_time, self._on_thaw)
-
-        # Discard pending hide/show actions.
-        self._auto_show_timer.stop()
-
-    def thaw(self, thaw_time = None):
-        """
-        Allow hiding and showing the keyboard window again.
-        thaw_time in seconds, None to thaw immediately.
-        """
-        self._thaw_timer.stop()
-        if thaw_time is None:
-            self._on_thaw()
+            # Run/stop GlobalKeyListener when tablet-mode-enter-key or
+            # tablet-mode-leave-key change.
+            self._hw_sensor_tracker.update_sensor_sources()
         else:
-            self._thaw_timer.start(thaw_time, self._on_thaw)
+            if self._hw_sensor_tracker:
+                self._hw_sensor_tracker.disconnect(
+                    "tablet-mode-changed", self._on_tablet_mode_changed)
+            self._hw_sensor_tracker = None
 
-    def _on_thaw(self):
-        self._thaw_timer.stop()
-        self._frozen = False
+        _logger.debug("enable_tablet_mode_detection {} {}"
+                      .format(enable, self._hw_sensor_tracker))
+
+    def enable_keyboard_device_detection(self, enable):
+        """
+        Detect if physical keyboard devices are present in the system.
+        When detected, auto-show is locked.
+        """
+        if enable:
+            if not self._udev_tracker:
+                self._udev_tracker = UDevTracker()
+                self._udev_tracker.connect(
+                    "keyboard-detection-changed",
+                    self._on_keyboard_device_detection_changed)
+        else:
+            if self._udev_tracker:
+                self._udev_tracker.disconnect(
+                    "keyboard-detection-changed",
+                    self._on_keyboard_device_detection_changed)
+            self._udev_tracker = None
+
+        _logger.debug("enable_keyboard_device_detection {} {}"
+                      .format(enable, self._udev_tracker))
+
+    def lock(self, reason, duration, lock_show, lock_hide):
+        """
+        Lock showing and/or hiding the keyboard window.
+        There is a separate, independent lock for each unique "reason".
+        If duration is specified, automatically unlock after these number of
+        seconds.
+        """
+        class AutoShowLock:
+            timer = None
+            lock_show = True
+            lock_hide = True
+            visibility_change = None
+
+        # Discard pending hide/show actions.
+        self._auto_show_timer.stop()
+
+        lock = self._locks.setdefault(reason, AutoShowLock())
+
+        if lock.timer:
+            lock.timer.stop()
+
+        if duration is None:
+            lock.timer = None
+        else:
+            lock.timer = TimerOnce()
+            lock.timer.start(duration, self._on_lock_timer, reason)
+
+        lock.lock_show = lock_show
+        lock.lock_hide = lock_hide
+
+        _logger.debug("lock({}): {}"
+                      .format(repr(reason), list(self._locks.keys())))
+
+    def unlock(self, reason):
+        """
+        Remove a specific lock named by "reason".
+        Returns the change in visibility that occurred while this lock was
+        active. None for no change.
+        """
+        result = None
+        lock = self._locks.get(reason)
+        if lock:
+            result = lock.visibility_change
+            if lock.timer:
+                lock.timer.stop()
+            del self._locks[reason]
+
+        _logger.debug("unlock({}) {}"
+                      .format(repr(reason), list(self._locks.keys())))
+
+        return result
+
+    def unlock_all(self):
+        """
+        Remove all locks.
+        """
+        for lock in self._locks.values():
+            if lock.timer:
+                lock.timer.stop()
+        self._locks.clear()
+
+    def _on_lock_timer(self, reason):
+        self.unlock(reason)
         return False
 
-    def lock_visible(self, lock, thaw_time = 1.0):
+    def is_locked(self, reason):
+        return reason in self._locks
+
+    def is_show_locked(self):
+        for lock in self._locks.values():
+            if lock.lock_show:
+                return True
+        return False
+
+    def is_hide_locked(self):
+        for lock in self._locks.values():
+            if lock.lock_hide:
+                return True
+        return False
+
+    def lock_visible(self, lock, thaw_time=1.0):
         """
-        Lock window permanetly visible in response to the user showing it.
+        Lock window permanently visible in response to the user showing it.
         Optionally freeze hiding/showing for a limited time.
         """
+        _logger.debug("lock_visible{} ".format((lock, thaw_time)))
+
         # Permanently lock visible.
         self._lock_visible = lock
 
         # Temporarily stop showing/hiding.
         if thaw_time:
-            self.freeze(thaw_time)
+            self.lock("lock_visible", thaw_time, True, True)
 
         # Leave the window in its current state,
         # discard pending hide/show actions.
@@ -164,6 +241,53 @@ class AutoShow(object):
         # Stop pending auto-repositioning
         if lock:
             self._keyboard.stop_auto_positioning()
+
+    def is_text_entry_active(self):
+        return bool(self._active_accessible)
+
+    def can_hide_keyboard(self):
+        if _logger.isEnabledFor(logging.INFO):
+            msg = "locks={} " \
+                .format([reason for reason, lock in self._locks.items()
+                        if lock.lock_hide])
+
+            _logger.info("can_hide_keyboard: " + msg)
+
+        return not self.is_hide_locked()
+
+    def can_show_keyboard(self):
+        result = True
+
+        msg = ""
+        if _logger.isEnabledFor(logging.INFO):
+            msg += "locks={} " \
+                .format([reason for reason, lock in self._locks.items()
+                        if lock.lock_show])
+
+        if self._locks:
+            result = False
+        else:
+            if config.is_tablet_mode_detection_enabled():
+                tablet_mode = self._hw_sensor_tracker.get_tablet_mode() \
+                    if self._hw_sensor_tracker else None
+
+                msg += "tablet_mode={} ".format(tablet_mode)
+
+                result = result and \
+                    tablet_mode is not False  # can be True, False or None
+
+            if config.is_keyboard_device_detection_enabled():
+                detected = self._udev_tracker.is_keyboard_device_detected() \
+                    if self._udev_tracker else None
+
+                msg += "keyboard_device_detected={} ".format(detected)
+
+                result = result and \
+                    detected is not True  # can be True, False or None
+
+        _logger.info("can_show_keyboard: " + msg)
+
+        return result
 
     def _on_text_caret_moved(self, event):
         """
@@ -176,38 +300,73 @@ class AutoShow(object):
 
             accessible = self._active_accessible
             if accessible:
-                if self._state_tracker.is_single_line():
+                if accessible.is_single_line():
                     self._on_text_entry_activated(accessible)
 
     def _on_text_entry_activated(self, accessible):
         self._active_accessible = accessible
         active = bool(accessible)
 
-        # show/hide the keyboard window
-        if not active is None:
-            # Always allow to show the window even when locked.
-            # Mitigates right click on unity-2d launcher hiding
-            # onboard before _lock_visible is set (Precise).
-            if self._lock_visible:
-                active = True
+        self.request_keyboard_visible(active)
 
-            if not self.is_paused() and \
-               not self.is_frozen():
-                self.show_keyboard(active)
+    def _on_tablet_mode_changed(self, active):
+        self._handle_tablet_mode_changed(active)
 
-            # The active accessible changed, stop trying to
-            # track the position of the previous one.
-            # -> less erratic movement during quick focus changes
-            self._keyboard.stop_auto_positioning()
+    def _on_keyboard_device_detection_changed(self, detected):
+        self._handle_tablet_mode_changed(not detected)
 
-    def show_keyboard(self, show):
+    def _handle_tablet_mode_changed(self, tablet_mode_active):
+        if tablet_mode_active:
+            show = self.is_text_entry_active()
+        else:
+            # hide keyboard even if it was locked visible
+            self.lock_visible(False, thaw_time=0)
+            show = False
+
+        self.request_keyboard_visible(show)
+
+    def request_keyboard_visible(self, visible, delay=None):
+        # Remember request per lock. That way we know the time span in
+        # which the visibility change occurred.
+        for lock in self._locks.values():
+            lock.visibility_change = visible
+
+        # Always allow to show the window even when locked.
+        # Mitigates right click on unity-2d launcher hiding
+        # onboard before _lock_visible is set (Precise).
+        if self._lock_visible:
+            visible = True
+
+        can_hide = self.can_hide_keyboard()
+        can_show = self.can_show_keyboard()
+
+        _logger.debug("request_keyboard_visible({}): lock_visible={} "
+                      "can_hide={} can_show={}"
+                      .format(visible, self._lock_visible, can_hide, can_show))
+
+        if visible is False and can_hide or \
+           visible is True  and can_show:
+            self.show_keyboard(visible, delay)
+
+        # The active accessible changed, stop trying to
+        # track the position of the previous one.
+        # -> less erratic movement during quick focus changes
+        self._keyboard.stop_auto_positioning()
+
+    def show_keyboard(self, show, delay=None):
         """ Begin AUTO_SHOW or AUTO_HIDE transition """
-        # Don't act on each and every focus message. Delay the start
-        # of the transition slightly so that only the last of a bunch of
-        # focus messages is acted on.
-        delay = self.SHOW_REACTION_TIME if show else \
-                self.HIDE_REACTION_TIME
-        self._auto_show_timer.start(delay, self._begin_transition, show)
+        if delay is None:
+            # Don't act on each and every focus message. Delay the start
+            # of the transition slightly so that only the last of a bunch of
+            # focus messages is acted on.
+            delay = (self.SHOW_REACTION_TIME if show else
+                     self.HIDE_REACTION_TIME)
+
+        if delay == 0:
+            self._auto_show_timer.stop()
+            self._begin_transition(show)
+        else:
+            self._auto_show_timer.start(delay, self._begin_transition, show)
 
     def _begin_transition(self, show):
         self._keyboard.transition_visible_to(show)
@@ -218,7 +377,7 @@ class AutoShow(object):
 
     def get_repositioned_window_rect(self, view, home, limit_rects,
                                      test_clearance, move_clearance,
-                                     horizontal = True, vertical = True):
+                                     horizontal=True, vertical=True):
         """
         Get the alternative window rect suggested by auto-show or None if
         no repositioning is required.
@@ -227,7 +386,8 @@ class AutoShow(object):
         if not accessible:
             return None
 
-        acc_rect = self._state_tracker.get_accessible_extents(accessible)
+        accessible.invalidate_extents()
+        acc_rect = accessible.get_extents()
         if acc_rect.is_empty() or \
            self._lock_visible:
             return None
@@ -247,13 +407,13 @@ class AutoShow(object):
 
         # "Follow active window" method
         if method == RepositionMethodEnum.REDUCE_POINTER_TRAVEL:
-            frame = self._state_tracker.get_frame()
-            app_rect = self._state_tracker.get_accessible_extents(frame) \
-                        if frame else Rect()
+            frame = accessible.get_frame()
+            app_rect = frame.get_extents() \
+                if frame else Rect()
             x, y = self._find_close_position(view, rh,
-                                                app_rect, acc_rect, limit_rects,
-                                                test_clearance, move_clearance,
-                                                horizontal, vertical)
+                                             app_rect, acc_rect, limit_rects,
+                                             test_clearance, move_clearance,
+                                             horizontal, vertical)
 
         # "Only move when necessary" method
         if method == RepositionMethodEnum.PREVENT_OCCLUSION:
@@ -269,13 +429,17 @@ class AutoShow(object):
     def _find_close_position(self, view, home,
                              app_rect, acc_rect, limit_rects,
                              test_clearance, move_clearance,
-                             horizontal = True, vertical = True):
+                             horizontal=True, vertical=True):
         rh = home
-        move_clearance = Rect(10, 10, 10, 10)
+
+        # Closer clearance for toplevels. There's usually nothing
+        # that can be obscured.
+        move_clearance_frame = Rect(10, 10, 10, 10)
 
         # Leave a different clearance for the new, yet to be found, positions.
         ra = acc_rect.apply_border(*move_clearance)
-        rp = app_rect.apply_border(*move_clearance)
+        if not app_rect.is_empty():
+            rp = app_rect.apply_border(*move_clearance_frame)
 
         # candidate positions
         vp = []
@@ -285,15 +449,15 @@ class AutoShow(object):
                 xc = max(xc, app_rect.left())
                 xc = min(xc, app_rect.right() - rh.w)
 
-            # below window
-            vp.append([xc, rp.bottom(), app_rect])
+            if not app_rect.is_empty():
+                # below window
+                vp.append([xc, rp.bottom(), app_rect])
 
-            # above window
-            vp.append([xc, rp.top() - rh.h, app_rect])
+                # above window
+                vp.append([xc, rp.top() - rh.h, app_rect])
 
             # inside maximized window, y at home.y
             vp.append([xc, home.y, acc_rect])
-            # vp.append([xc, rp.bottom()-ymargin, app_rect.deflate(rh.h+move_clearance[3]+ymargin)])
 
             # below text entry
             vp.append([xc, ra.bottom(), acc_rect])
@@ -309,7 +473,7 @@ class AutoShow(object):
                                      limit_rects)
             r = Rect(pl[0], pl[1], rh.w, rh.h)
             ri = p[2]
-            rcs = [ri, acc_rect] # collision rects
+            rcs = [ri, acc_rect]  # collision rects
             if not any(r.intersects(rc) for rc in rcs):
                 rresult = r
                 break
@@ -336,7 +500,8 @@ class AutoShow(object):
 
         if rh.intersects(ra):
 
-            # Leave a different clearance for the new, yet to be found, positions.
+            # Leave a different clearance for the new,
+            # yet to be found positions.
             ra = acc_rect.apply_border(*move_clearance)
             x, y = rh.get_position()
 

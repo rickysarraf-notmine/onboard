@@ -1,6 +1,6 @@
 /*
  * Copyright © 2011-2013 Gerd Kohlberger <lowfi@chello.at>
- * Copyright © 2011-2014 marmuta <marmvta@gmail.com>
+ * Copyright © 2011-2014, 2016 marmuta <marmvta@gmail.com>
  *
  * This file is part of Onboard.
  *
@@ -67,7 +67,7 @@ osk_util_init (OskUtil *util, PyObject *args, PyObject *kwds)
 static void
 osk_util_dealloc (OskUtil *util)
 {
-    int i;
+    gsize i;
 
     for (i=0; i<G_N_ELEMENTS(util->signal_callbacks); i++)
     {
@@ -597,7 +597,8 @@ osk_util_remove_atom_from_property(PyObject *self, PyObject *args)
                             &nstates, &nleft, (unsigned char **) &states);
         if (actual_type == XA_ATOM)
         {
-            int i, new_len;
+	    unsigned int i;
+            int new_len;
             Atom new_states[12];
             Bool value_found = False;
 
